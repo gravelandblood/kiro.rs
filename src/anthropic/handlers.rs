@@ -129,6 +129,24 @@ pub async fn get_models() -> impl IntoResponse {
             max_tokens: 128_000,
         },
         Model {
+            id: "claude-sonnet-5-5".to_string(),
+            object: "model".to_string(),
+            created: 1759363200, // Oct 2, 2026
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 5.5".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 64_000,
+        },
+        Model {
+            id: "claude-sonnet-5-5-thinking".to_string(),
+            object: "model".to_string(),
+            created: 1759363200, // Oct 2, 2026
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 5.5 (Thinking)".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 64_000,
+        },
+        Model {
             id: "claude-sonnet-5".to_string(),
             object: "model".to_string(),
             created: 1782777600, // Jun 30, 2026
@@ -312,6 +330,7 @@ pub async fn post_messages(
 
     // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
     override_thinking_from_model_name(&mut payload);
+    normalize_sonnet5_thinking(&mut payload);
 
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {
@@ -380,12 +399,8 @@ pub async fn post_messages(
         payload.tools,
     ) as i32;
 
-    // 检查是否启用了thinking
-    let thinking_enabled = payload
-        .thinking
-        .as_ref()
-        .map(|t| t.is_enabled())
-        .unwrap_or(false);
+    // 检查是否启用了thinking。Sonnet 5.5 上游默认 adaptive。
+    let thinking_enabled = request_thinking_enabled(&payload.model, payload.thinking.as_ref());
 
     let tool_name_map = conversion_result.tool_name_map;
 
@@ -733,6 +748,43 @@ async fn handle_non_stream_request(
 /// - Opus 4.6：覆写为 adaptive 类型
 /// - 其他模型：覆写为 enabled 类型
 /// - budget_tokens 固定为 20000
+fn is_sonnet_5_family(model: &str) -> bool {
+    let model_lower = model.to_lowercase();
+    model_lower.contains("sonnet-5")
+}
+
+fn is_sonnet_55(model: &str) -> bool {
+    let model_lower = model.to_lowercase();
+    model_lower.contains("sonnet-5.5") || model_lower.contains("sonnet-5-5")
+}
+
+/// Sonnet 5 / 5.5 拒绝手动的 `thinking.type=enabled`。
+fn normalize_sonnet5_thinking(payload: &mut MessagesRequest) {
+    if !is_sonnet_5_family(&payload.model) {
+        return;
+    }
+    let needs_adaptive = payload
+        .thinking
+        .as_ref()
+        .is_some_and(|thinking| thinking.thinking_type == "enabled");
+    if !needs_adaptive {
+        return;
+    }
+    if let Some(thinking) = payload.thinking.as_mut() {
+        thinking.thinking_type = "adaptive".to_string();
+    }
+    if payload.output_config.is_none() {
+        payload.output_config = Some(OutputConfig {
+            effort: "high".to_string(),
+        });
+    }
+}
+
+fn request_thinking_enabled(model: &str, thinking: Option<&Thinking>) -> bool {
+    let explicit = thinking.map(|t| t.is_enabled()).unwrap_or(false);
+    explicit || is_sonnet_55(model)
+}
+
 fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
     let model_lower = payload.model.to_lowercase();
     if !model_lower.contains("thinking") {
@@ -828,6 +880,7 @@ pub async fn post_messages_cc(
 
     // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
     override_thinking_from_model_name(&mut payload);
+    normalize_sonnet5_thinking(&mut payload);
 
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {
@@ -896,12 +949,8 @@ pub async fn post_messages_cc(
         payload.tools,
     ) as i32;
 
-    // 检查是否启用了thinking
-    let thinking_enabled = payload
-        .thinking
-        .as_ref()
-        .map(|t| t.is_enabled())
-        .unwrap_or(false);
+    // 检查是否启用了thinking。Sonnet 5.5 上游默认 adaptive。
+    let thinking_enabled = request_thinking_enabled(&payload.model, payload.thinking.as_ref());
 
     let tool_name_map = conversion_result.tool_name_map;
 

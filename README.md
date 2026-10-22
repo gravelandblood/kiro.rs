@@ -439,6 +439,7 @@ RUST_LOG=debug ./target/release/kiro-rs
 | Anthropic 模型 | Kiro 模型 |
 |----------------|-----------|
 | `*fable*` | `claude-fable-5.1` |
+| `*sonnet-5.5*` / `*sonnet-5-5*` | `claude-sonnet-5.5` |
 | `*sonnet-5*` | `claude-sonnet-5` |
 | `*sonnet*`（含 4.6/4-6） | `claude-sonnet-4.6` |
 | `*sonnet*`（含 4.5/4-5） | `claude-sonnet-4.5` |
@@ -448,9 +449,10 @@ RUST_LOG=debug ./target/release/kiro-rs
 | `*opus*`（含 4.7/4-7） | `claude-opus-4.7` |
 | `*opus*`（含 4.6/4-6） | `claude-opus-4.6` |
 | `*opus*`（含 4.5/4-5） | `claude-opus-4.5` |
-| `*haiku*` | `claude-haiku-4.5` |
+| `*haiku*` except `*haiku-5*` | `claude-haiku-4.5` |
+| `*haiku-5*` | unsupported; Kiro has not published Haiku 5.5 |
 
-Sonnet 5 的 thinking 行为与已知限制见 [docs/claude-sonnet-5.md](docs/claude-sonnet-5.md)。
+Sonnet 5 的 thinking 行为与已知限制见 [docs/claude-sonnet-5.md](docs/claude-sonnet-5.md)。Sonnet 5.5 同样不接受 `thinking.type=enabled`，请求里的该值会改写为 `adaptive`。
 
 ## Admin（可选）
 

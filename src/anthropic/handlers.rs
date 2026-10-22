@@ -601,6 +601,8 @@ async fn handle_non_stream_request(
     let mut stop_reason = "end_turn".to_string();
     // 从 contextUsageEvent 计算的实际输入 tokens
     let mut context_input_tokens: Option<i32> = None;
+    let mut credit_usage = 0.0;
+    let mut saw_metering = false;
 
     // 收集工具调用的增量 JSON
     let mut tool_json_buffers: std::collections::HashMap<String, String> =
@@ -652,12 +654,13 @@ async fn handle_non_stream_request(
                             }
                         }
                         Event::ContextUsage(context_usage) => {
-                            // 从上下文使用百分比计算实际的 input_tokens
+                            // 从上下文使用百分比计算实际的 input_tokens，四舍五入到整数。
                             let window_size = get_context_window_size(model);
-                            let actual_input_tokens = (context_usage.context_usage_percentage
-                                * (window_size as f64)
-                                / 100.0)
-                                as i32;
+                            let actual_input_tokens =
+                                super::credit_cache::tokens_from_context_percentage(
+                                    context_usage.context_usage_percentage,
+                                    window_size,
+                                );
                             context_input_tokens = Some(actual_input_tokens);
                             // 上下文使用量达到 100% 时，设置 stop_reason 为 model_context_window_exceeded
                             if context_usage.context_usage_percentage >= 100.0 {
@@ -672,6 +675,15 @@ async fn handle_non_stream_request(
                         Event::Exception { exception_type, .. } => {
                             if exception_type == "ContentLengthExceededException" {
                                 stop_reason = "max_tokens".to_string();
+                            }
+                        }
+                        Event::Metering(metering) => {
+                            if let Some(credits) = super::credit_cache::observe_credit(
+                                &metering.unit,
+                                metering.usage,
+                            ) {
+                                credit_usage += credits;
+                                saw_metering = true;
                             }
                         }
                         _ => {}
@@ -722,8 +734,18 @@ async fn handle_non_stream_request(
     // 估算输出 tokens
     let output_tokens = token::estimate_output_tokens(&content);
 
-    // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值
-    let final_input_tokens = context_input_tokens.unwrap_or(input_tokens);
+    // 使用从 contextUsageEvent 计算的 input_tokens，如果没有则使用估算值。
+    // 只有拿到上下文大小时才用 credits 反推缓存。
+    let usage = if let Some(total_input) = context_input_tokens {
+        super::credit_cache::split_usage(
+            model,
+            total_input,
+            output_tokens,
+            if saw_metering { Some(credit_usage) } else { None },
+        )
+    } else {
+        super::credit_cache::split_usage(model, input_tokens, output_tokens, None)
+    };
 
     // 构建 Anthropic 响应
     let response_body = json!({
@@ -735,8 +757,10 @@ async fn handle_non_stream_request(
         "stop_reason": stop_reason,
         "stop_sequence": null,
         "usage": {
-            "input_tokens": final_input_tokens,
-            "output_tokens": output_tokens
+            "input_tokens": usage.input_tokens,
+            "cache_read_input_tokens": usage.cache_read_input_tokens,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": usage.output_tokens
         }
     });
 
